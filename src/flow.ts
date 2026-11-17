@@ -418,6 +418,53 @@ async function applySettings(page: Page, job: Job): Promise<number> {
 
 const ASSET_PREFIX = "asset:";
 
+// FlowMCP renames generated tiles to stable scene names. Keep the former Flow title as an alias so later
+// generations that still refer to the original asset name can find the renamed tile in Flow.
+type AssetAliasMap = Record<string, string>;
+const ASSET_ALIASES_FILE = join(HOME_DIR, "asset-aliases.json");
+
+function currentFlowProject(page: Page): string {
+  return page.url().match(/\\/project\\/([^/?#]+)/)?.[1] ?? "default";
+}
+
+function readAssetAliases(): Record<string, AssetAliasMap> {
+  try {
+    return JSON.parse(readFileSync(ASSET_ALIASES_FILE, "utf8")) as Record<string, AssetAliasMap>;
+  } catch {
+    return {};
+  }
+}
+
+function resolveAssetAlias(page: Page, requestedName: string): string {
+  const aliases = readAssetAliases()[currentFlowProject(page)] ?? {};
+  let name = requestedName.trim();
+  const visited = new Set<string>();
+  for (let i = 0; i < 20; i++) {
+    const key = name.toLocaleLowerCase();
+    if (visited.has(key) || !aliases[key]) break;
+    visited.add(key);
+    name = aliases[key];
+  }
+  return name;
+}
+
+function rememberAssetAlias(page: Page, previousName: string, currentName: string): void {
+  const previous = previousName.trim();
+  const current = currentName.trim();
+  if (!previous || !current || previous.toLocaleLowerCase() === current.toLocaleLowerCase()) return;
+  const all = readAssetAliases();
+  const project = currentFlowProject(page);
+  const aliases = all[project] ?? {};
+  // Collapse aliases that pointed at the old title, so every saved name resolves directly to the newest title.
+  for (const [key, value] of Object.entries(aliases)) {
+    if (value.toLocaleLowerCase() === previous.toLocaleLowerCase()) aliases[key] = current;
+  }
+  aliases[previous.toLocaleLowerCase()] = current;
+  all[project] = aliases;
+  mkdirSync(HOME_DIR, { recursive: true });
+  writeFileSync(ASSET_ALIASES_FILE, JSON.stringify(all, null, 2));
+}
+
 // Waits for THIS upload by its own name until Flow has finished processing it (its picture carries a media id), so
 // a half-processed upload can never be taken for the next generation's result.
 async function waitForUpload(page: Page, name: string, timeoutMs: number): Promise<void> {
@@ -457,6 +504,7 @@ const optionByName = (list: Locator, name: string) =>
 // The frame pickers attach on click; the ingredients picker only previews and needs "Add to prompt".
 // Option names are "<asset name>" or "<asset name> Image|Video", so match on the prefix.
 export async function attachAsset(page: Page, opener: Locator, assetName: string): Promise<void> {
+  const resolvedName = resolveAssetAlias(page, assetName);
   const list = page.getByRole("listbox", { name: "Asset list" });
   const all = page.getByRole("tab", { name: "All", exact: true });
   const shows = (l: Locator, ms: number) => l.waitFor({ state: "visible", timeout: ms }).then(() => true, () => false);
@@ -473,14 +521,14 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
     await opener.click();
     opened = await Promise.race([shows(list, 5000), shows(all, 5000)]);
   }
-  if (!opened) throw new Error(`Flow's media picker did not open (three tries) while attaching "${assetName}". Nothing was generated.`);
+  if (!opened) throw new Error(`Flow's media picker did not open (three tries) while attaching "${resolvedName}". Nothing was generated.`);
   // The picker reopens on whichever tab was used last (Characters, after a character), so start from All each time.
   if ((await all.isVisible().catch(() => false)) && (await all.getAttribute("aria-selected")) !== "true") {
     await all.click();
     await pause(page, 1000);
   }
   await list.waitFor({ state: "visible", timeout: 10_000 });
-  let option = optionByName(list, assetName);
+  let option = optionByName(list, resolvedName);
   // Voices, characters and avatars live behind their own tabs, so look there when "All" does not have it.
   if (!(await option.isVisible().catch(() => false))) {
     for (const tab of ["Voices", "Characters", "Avatars", "Uploads"]) {
@@ -488,7 +536,7 @@ export async function attachAsset(page: Page, opener: Locator, assetName: string
       if (!(await t.isVisible().catch(() => false))) continue;
       await t.click();
       await pause(page, 1200);
-      option = optionByName(list, assetName);
+      option = optionByName(list, resolvedName);
       if (await option.isVisible().catch(() => false)) break;
     }
   }
@@ -963,6 +1011,7 @@ export async function downloadCollection(name: string, dir: string): Promise<str
 // tile to our own scene name fixes it at the source - the user's suggestion, and the right one.
 async function renameTile(page: Page, tile: Locator, title: string): Promise<boolean> {
   try {
+    const previousTitle = (await tile.getAttribute("aria-label").catch(() => null))?.trim() ?? "";
     await hoverTile(page, tile);
     const more = tile.getByRole("button", { name: "More options" });
     if (!(await more.isVisible({ timeout: 3000 }).catch(() => false))) return false;
@@ -978,6 +1027,10 @@ async function renameTile(page: Page, tile: Locator, title: string): Promise<boo
     await page.keyboard.type(title, { delay: 8 });
     await page.keyboard.press("Enter");
     await pause(page, 1500);
+    const savedTitle = (await tile.getAttribute("aria-label").catch(() => null))?.trim() ?? "";
+    if (previousTitle && (savedTitle === title || savedTitle.toLocaleLowerCase() === title.toLocaleLowerCase())) {
+      rememberAssetAlias(page, previousTitle, title);
+    }
     return true;
   } catch {
     await page.keyboard.press("Escape").catch(() => {});
