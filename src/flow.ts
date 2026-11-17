@@ -424,7 +424,7 @@ type AssetAliasMap = Record<string, string>;
 const ASSET_ALIASES_FILE = join(HOME_DIR, "asset-aliases.json");
 
 function currentFlowProject(page: Page): string {
-  return page.url().match(/\\/project\\/([^/?#]+)/)?.[1] ?? "default";
+  return page.url().match(/\/project\/([^/?#]+)/)?.[1] ?? "default";
 }
 
 function readAssetAliases(): Record<string, AssetAliasMap> {
