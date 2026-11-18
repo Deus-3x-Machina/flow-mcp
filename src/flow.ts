@@ -488,7 +488,8 @@ async function uploadAsset(page: Page, job: Job, file: string, label: string): P
   // and fall back to the caller-provided extension for formats we do not identify.
   const detectedExtension = extensionOf(file);
   const sourceExtension = extname(file).toLowerCase();
-  const extension = detectedExtension !== ".bin" ? detectedExtension : sourceExtension;
+  const detectedUploadExtension = detectedExtension === ".jpeg" ? ".jpg" : detectedExtension;
+  const extension = detectedUploadExtension !== ".bin" ? detectedUploadExtension : sourceExtension;
   if (!extension) {
     throw new Error(`Could not determine the file format for upload: ${file}`);
   }
