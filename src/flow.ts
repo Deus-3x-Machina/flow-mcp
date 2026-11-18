@@ -483,7 +483,16 @@ async function waitForUpload(page: Page, name: string, timeoutMs: number): Promi
 async function uploadAsset(page: Page, job: Job, file: string, label: string): Promise<string> {
   if (file.startsWith(ASSET_PREFIX)) return file.slice(ASSET_PREFIX.length).trim();
   if (!existsSync(file)) throw new Error(`File not found: ${file}`);
-  const name = `fm-${job.id}-${label}${extname(file).toLowerCase()}`;
+  // Google Flow rejects extensionless uploads even when the file contents are valid.
+  // Prefer the binary signature (the downloaded Flow assets often have no extension),
+  // and fall back to the caller-provided extension for formats we do not identify.
+  const detectedExtension = extensionOf(file);
+  const sourceExtension = extname(file).toLowerCase();
+  const extension = detectedExtension !== ".bin" ? detectedExtension : sourceExtension;
+  if (!extension) {
+    throw new Error(`Could not determine the file format for upload: ${file}`);
+  }
+  const name = `fm-${job.id}-${label}${extension}`;
   const staged = join(mkdtempSync(join(tmpdir(), "flow-mcp-")), name);
   copyFileSync(file, staged);
   await scrollToTop(page);
