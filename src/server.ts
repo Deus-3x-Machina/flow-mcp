@@ -108,7 +108,7 @@ export async function startServer(core: Core): Promise<ServerRole> {
 
   const listening = await new Promise<boolean>((ok) => {
     server.once("error", () => ok(false));
-    server.listen(PORT, "127.0.0.1", () => ok(true));
+    server.listen(PORT, "0.0.0.0", () => ok(true));
   });
   if (listening) {
     mkdirSync(HOME_DIR, { recursive: true });
