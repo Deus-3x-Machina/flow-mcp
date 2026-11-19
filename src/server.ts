@@ -65,7 +65,12 @@ export type ServerRole = "owner" | "client" | "none";
 export async function startServer(core: Core): Promise<ServerRole> {
   mkdirSync(UPLOAD_DIR, { recursive: true });
   const token = randomBytes(24).toString("hex");
-  const allowedHosts = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+  // Keep DNS-rebinding protection while allowing explicitly configured LAN or tunnel hostnames.
+  const allowedHosts = new Set([
+    `127.0.0.1:${PORT}`,
+    `localhost:${PORT}`,
+    ...(process.env.FLOW_MCP_ALLOWED_HOSTS ?? "").split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
+  ]);
 
   const server = createServer(async (req, res) => {
     try {
